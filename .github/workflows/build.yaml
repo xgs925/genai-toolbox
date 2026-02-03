@@ -1,0 +1,125 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: build
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+  release:
+    types:
+      - created
+
+# Declare default permissions as read only.
+permissions: read-all
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        arch: [amd64]
+        include:
+          - os: ubuntu-latest
+            arch: arm64
+          - os: macos-latest
+            arch: arm64
+      fail-fast: false
+    steps:
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.24"
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install dependencies
+        run: go get .
+
+      - name: Setup CGO for Linux ARM64
+        if: ${{ runner.os == 'Linux' && matrix.arch == 'arm64' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build for Linux
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          CGO_ENABLED: 1
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            export CC=aarch64-linux-gnu-gcc
+            export CXX=aarch64-linux-gnu-g++
+          fi
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-linux-${{ matrix.arch }}
+
+      - name: Build for Windows
+        if: ${{ runner.os == 'Windows' }}
+        env:
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-windows-${{ matrix.arch }}.exe
+
+      - name: Build for macOS
+        if: ${{ runner.os == 'macOS' }}
+        env:
+          CGO_ENABLED: 1
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-darwin-${{ matrix.arch }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0
+        with:
+          name: genai-toolbox-${{ runner.os }}-${{ matrix.arch }}
+          path: |
+            genai-toolbox-linux-${{ matrix.arch }}
+            genai-toolbox-windows-${{ matrix.arch }}.exe
+            genai-toolbox-darwin-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    name: Release build artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' && github.event.action == 'created'
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@c9b757c974c67c88f7b640c7f167779056587f1f # v2.0.9
+        with:
+          files: |
+            artifacts/genai-toolbox-linux-amd64/genai-toolbox-linux-amd64
+            artifacts/genai-toolbox-linux-arm64/genai-toolbox-linux-arm64
+            artifacts/genai-toolbox-windows-amd64/genai-toolbox-windows-amd64.exe
+            artifacts/genai-toolbox-darwin-amd64/genai-toolbox-darwin-amd64
+            artifacts/genai-toolbox-darwin-arm64/genai-toolbox-darwin-arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
