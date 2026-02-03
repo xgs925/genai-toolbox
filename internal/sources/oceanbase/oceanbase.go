@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -57,6 +58,8 @@ type Config struct {
 	Database     string `yaml:"database" validate:"required"`
 	QueryTimeout string `yaml:"queryTimeout"`
 	Mode         string `yaml:"mode" validate:"omitempty,oneof=mysql oracle"`
+	Tenant       string `yaml:"tenant" validate:"omitempty"`
+	Cluster      string `yaml:"cluster" validate:"omitempty"`
 }
 
 func (r Config) SourceConfigType() string {
@@ -64,7 +67,7 @@ func (r Config) SourceConfigType() string {
 }
 
 func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.Source, error) {
-	pool, err := initOceanBaseConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout, r.Mode)
+	pool, err := initOceanBaseConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout, r.Mode, r.Tenant, r.Cluster)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool: %w", err)
 	}
@@ -184,13 +187,32 @@ func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (an
 	return out, nil
 }
 
-func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name, host, port, user, pass, dbname, queryTimeout, mode string) (*sql.DB, error) {
+func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name, host, port, user, pass, dbname, queryTimeout, mode, tenant, cluster string) (*sql.DB, error) {
 	_, span := sources.InitConnectionSpan(ctx, tracer, SourceType, name)
 	defer span.End()
 
 	if mode == "oracle" {
 		// For Oracle mode, use oracle driver
-		dsn := fmt.Sprintf("oracle://%s:%s@%s:%s/%s", user, pass, host, port, dbname)
+		// URL encode user and password to handle special characters like colon
+		encodedUser := url.QueryEscape(user)
+		encodedPass := url.QueryEscape(pass)
+		
+		// Build connection string with tenant info if provided
+		var dsn string
+		if tenant != "" {
+			// Include tenant in the connection string
+			encodedTenant := url.QueryEscape(tenant)
+			dsn = fmt.Sprintf("oracle://%s:%s@%s:%s/%s?tenant=%s", encodedUser, encodedPass, host, port, dbname, encodedTenant)
+			
+			// Add cluster info if provided
+			if cluster != "" {
+				encodedCluster := url.QueryEscape(cluster)
+				dsn += "&cluster=" + encodedCluster
+			}
+		} else {
+			dsn = fmt.Sprintf("oracle://%s:%s@%s:%s/%s", encodedUser, encodedPass, host, port, dbname)
+		}
+		
 		pool, err := sql.Open("oracle", dsn)
 		if err != nil {
 			return nil, fmt.Errorf("sql.Open: %w", err)
@@ -198,6 +220,7 @@ func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name,
 		return pool, nil
 	} else {
 		// For MySQL mode (default), use mysql driver
+		// MySQL driver handles special characters in user/pass automatically
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
 
 		if queryTimeout != "" {
