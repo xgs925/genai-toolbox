@@ -21,6 +21,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/sijms/go-ora/v2"
 	"github.com/goccy/go-yaml"
 	"github.com/googleapis/genai-toolbox/internal/sources"
 	"github.com/googleapis/genai-toolbox/internal/tools/mysql/mysqlcommon"
@@ -55,6 +56,7 @@ type Config struct {
 	Password     string `yaml:"password" validate:"required"`
 	Database     string `yaml:"database" validate:"required"`
 	QueryTimeout string `yaml:"queryTimeout"`
+	Mode         string `yaml:"mode" validate:"omitempty,oneof=mysql oracle"`
 }
 
 func (r Config) SourceConfigType() string {
@@ -62,7 +64,7 @@ func (r Config) SourceConfigType() string {
 }
 
 func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.Source, error) {
-	pool, err := initOceanBaseConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout)
+	pool, err := initOceanBaseConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout, r.Mode)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool: %w", err)
 	}
@@ -103,19 +105,12 @@ func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (an
 	if err != nil {
 		return nil, fmt.Errorf("unable to execute query: %w", err)
 	}
+	defer results.Close()
 
 	cols, err := results.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("unable to retrieve rows column name: %w", err)
 	}
-
-	// create an array of values for each column, which can be re-used to scan each row
-	rawValues := make([]any, len(cols))
-	values := make([]any, len(cols))
-	for i := range rawValues {
-		values[i] = &rawValues[i]
-	}
-	defer results.Close()
 
 	colTypes, err := results.ColumnTypes()
 	if err != nil {
@@ -123,26 +118,63 @@ func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (an
 	}
 
 	var out []any
-	for results.Next() {
-		err := results.Scan(values...)
-		if err != nil {
-			return nil, fmt.Errorf("unable to parse row: %w", err)
-		}
-		vMap := make(map[string]any)
-		for i, name := range cols {
-			val := rawValues[i]
-			if val == nil {
-				vMap[name] = nil
-				continue
-			}
 
-			// oceanbase uses mysql driver
-			vMap[name], err = mysqlcommon.ConvertToType(colTypes[i], val)
-			if err != nil {
-				return nil, fmt.Errorf("errors encountered when converting values: %w", err)
+	if s.Mode == "oracle" {
+		// For Oracle mode, use Oracle-specific result handling
+		for results.Next() {
+			values := make([]any, len(cols))
+			valuePtrs := make([]any, len(cols))
+			
+			for i := range values {
+				valuePtrs[i] = &values[i]
 			}
+			
+			err := results.Scan(valuePtrs...)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse row: %w", err)
+			}
+			
+			vMap := make(map[string]any)
+			for i, name := range cols {
+				val := values[i]
+				if val == nil {
+					vMap[name] = nil
+					continue
+				}
+				vMap[name] = val
+			}
+			out = append(out, vMap)
 		}
-		out = append(out, vMap)
+	} else {
+		// For MySQL mode (default), use MySQL-specific result handling
+		// create an array of values for each column, which can be re-used to scan each row
+		rawValues := make([]any, len(cols))
+		values := make([]any, len(cols))
+		for i := range rawValues {
+			values[i] = &rawValues[i]
+		}
+
+		for results.Next() {
+			err := results.Scan(values...)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse row: %w", err)
+			}
+			vMap := make(map[string]any)
+			for i, name := range cols {
+				val := rawValues[i]
+				if val == nil {
+					vMap[name] = nil
+					continue
+				}
+
+				// oceanbase uses mysql driver
+				vMap[name], err = mysqlcommon.ConvertToType(colTypes[i], val)
+				if err != nil {
+					return nil, fmt.Errorf("errors encountered when converting values: %w", err)
+				}
+			}
+			out = append(out, vMap)
+		}
 	}
 
 	if err := results.Err(); err != nil {
@@ -152,23 +184,34 @@ func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (an
 	return out, nil
 }
 
-func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name, host, port, user, pass, dbname, queryTimeout string) (*sql.DB, error) {
+func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name, host, port, user, pass, dbname, queryTimeout, mode string) (*sql.DB, error) {
 	_, span := sources.InitConnectionSpan(ctx, tracer, SourceType, name)
 	defer span.End()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
-
-	if queryTimeout != "" {
-		timeout, err := time.ParseDuration(queryTimeout)
+	if mode == "oracle" {
+		// For Oracle mode, use oracle driver
+		dsn := fmt.Sprintf("oracle://%s:%s@%s:%s/%s", user, pass, host, port, dbname)
+		pool, err := sql.Open("oracle", dsn)
 		if err != nil {
-			return nil, fmt.Errorf("invalid queryTimeout %q: %w", queryTimeout, err)
+			return nil, fmt.Errorf("sql.Open: %w", err)
 		}
-		dsn += "&readTimeout=" + timeout.String()
-	}
+		return pool, nil
+	} else {
+		// For MySQL mode (default), use mysql driver
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
 
-	pool, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("sql.Open: %w", err)
+		if queryTimeout != "" {
+			timeout, err := time.ParseDuration(queryTimeout)
+			if err != nil {
+				return nil, fmt.Errorf("invalid queryTimeout %q: %w", queryTimeout, err)
+			}
+			dsn += "&readTimeout=" + timeout.String()
+		}
+
+		pool, err := sql.Open("mysql", dsn)
+		if err != nil {
+			return nil, fmt.Errorf("sql.Open: %w", err)
+		}
+		return pool, nil
 	}
-	return pool, nil
 }
