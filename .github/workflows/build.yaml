@@ -14,10 +14,6 @@
 
 name: build
 on:
-  push:
-    branches:
-      - "main"
-  pull_request:
   release:
     types:
       - created
@@ -31,13 +27,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
         arch: [amd64]
-        include:
-          - os: ubuntu-latest
-            arch: arm64
-          - os: macos-latest
-            arch: arm64
       fail-fast: false
     steps:
       - name: Setup Go
@@ -51,12 +42,6 @@ jobs:
       - name: Install dependencies
         run: go get .
 
-      - name: Setup CGO for Linux ARM64
-        if: ${{ runner.os == 'Linux' && matrix.arch == 'arm64' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
       - name: Build for Linux
         if: ${{ runner.os == 'Linux' }}
         env:
@@ -64,11 +49,7 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
         run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            export CC=aarch64-linux-gnu-gcc
-            export CXX=aarch64-linux-gnu-g++
-          fi
-          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-linux-${{ matrix.arch }}
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o toolbox
 
       - name: Build for Windows
         if: ${{ runner.os == 'Windows' }}
@@ -77,25 +58,15 @@ jobs:
           GOOS: windows
           GOARCH: ${{ matrix.arch }}
         run: |
-          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-windows-${{ matrix.arch }}.exe
-
-      - name: Build for macOS
-        if: ${{ runner.os == 'macOS' }}
-        env:
-          CGO_ENABLED: 1
-          GOOS: darwin
-          GOARCH: ${{ matrix.arch }}
-        run: |
-          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-darwin-${{ matrix.arch }}
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o toolbox.exe
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0
         with:
           name: genai-toolbox-${{ runner.os }}-${{ matrix.arch }}
           path: |
-            genai-toolbox-linux-${{ matrix.arch }}
-            genai-toolbox-windows-${{ matrix.arch }}.exe
-            genai-toolbox-darwin-${{ matrix.arch }}
+            toolbox
+            toolbox.exe
           if-no-files-found: error
 
   release:
@@ -116,10 +87,7 @@ jobs:
         uses: softprops/action-gh-release@c9b757c974c67c88f7b640c7f167779056587f1f # v2.0.9
         with:
           files: |
-            artifacts/genai-toolbox-linux-amd64/genai-toolbox-linux-amd64
-            artifacts/genai-toolbox-linux-arm64/genai-toolbox-linux-arm64
-            artifacts/genai-toolbox-windows-amd64/genai-toolbox-windows-amd64.exe
-            artifacts/genai-toolbox-darwin-amd64/genai-toolbox-darwin-amd64
-            artifacts/genai-toolbox-darwin-arm64/genai-toolbox-darwin-arm64
+            artifacts/genai-toolbox-linux-amd64/toolbox
+            artifacts/genai-toolbox-windows-amd64/toolbox.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
