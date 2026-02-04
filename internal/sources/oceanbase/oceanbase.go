@@ -21,6 +21,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/alexbrainman/odbc"
 	"github.com/goccy/go-yaml"
 	"github.com/googleapis/genai-toolbox/internal/sources"
 	"github.com/googleapis/genai-toolbox/internal/tools/mysql/mysqlcommon"
@@ -53,7 +54,8 @@ type Config struct {
 	Port         string `yaml:"port" validate:"required"`
 	User         string `yaml:"user" validate:"required"`
 	Password     string `yaml:"password" validate:"required"`
-	Database     string `yaml:"database" validate:"required"`
+	Database     string `yaml:"database"`
+	Mode         string `yaml:"mode" validate:"required,oneof=mysql oracle"`
 	QueryTimeout string `yaml:"queryTimeout"`
 }
 
@@ -62,7 +64,7 @@ func (r Config) SourceConfigType() string {
 }
 
 func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.Source, error) {
-	pool, err := initOceanBaseConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout)
+	pool, err := initOceanBaseConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.Mode, r.QueryTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool: %w", err)
 	}
@@ -152,21 +154,40 @@ func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (an
 	return out, nil
 }
 
-func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name, host, port, user, pass, dbname, queryTimeout string) (*sql.DB, error) {
+func initOceanBaseConnectionPool(ctx context.Context, tracer trace.Tracer, name, host, port, user, pass, dbname, mode, queryTimeout string) (*sql.DB, error) {
 	_, span := sources.InitConnectionSpan(ctx, tracer, SourceType, name)
 	defer span.End()
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
+	var driver string
+	var dsn string
 
-	if queryTimeout != "" {
-		timeout, err := time.ParseDuration(queryTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("invalid queryTimeout %q: %w", queryTimeout, err)
+	switch mode {
+	case "mysql":
+		driver = "mysql"
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
+		if queryTimeout != "" {
+			timeout, err := time.ParseDuration(queryTimeout)
+			if err != nil {
+				return nil, fmt.Errorf("invalid queryTimeout %q: %w", queryTimeout, err)
+			}
+			dsn += "&readTimeout=" + timeout.String()
 		}
-		dsn += "&readTimeout=" + timeout.String()
+	case "oracle":
+			driver = "odbc"
+			// Use DSN-less connection string
+			dsn = fmt.Sprintf("Driver={Oceanbase};SERVER=%s;PORT=%s;UID=%s;PWD=%s;DATABASE=%s", host, port, user, pass, dbname)
+			if queryTimeout != "" {
+				timeout, err := time.ParseDuration(queryTimeout)
+				if err != nil {
+					return nil, fmt.Errorf("invalid queryTimeout %q: %w", queryTimeout, err)
+				}
+				dsn += ";QUERY_TIMEOUT=" + timeout.String()
+			}
+	default:
+		return nil, fmt.Errorf("unsupported mode: %s", mode)
 	}
 
-	pool, err := sql.Open("mysql", dsn)
+	pool, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
