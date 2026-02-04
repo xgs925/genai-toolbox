@@ -32,16 +32,21 @@ jobs:
         arch: [amd64]
       fail-fast: false
     steps:
-      - name: Setup Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-        with:
-          go-version: "1.24"
-
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Install Go 1.24 (CentOS 7)
+        run: |
+          wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
+          echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+          source ~/.bashrc
+          go version
+
       - name: Install dependencies
-        run: go get .
+        run: |
+          export PATH=$PATH:/usr/local/go/bin
+          go get .
 
       - name: Install ODBC dependencies (CentOS)
         if: ${{ matrix.os == 'centos' }}
@@ -56,6 +61,7 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
         run: |
+          export PATH=$PATH:/usr/local/go/bin
           go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o toolbox
 
       - name: Upload build artifacts
