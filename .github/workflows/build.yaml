@@ -14,6 +14,10 @@
 
 name: build
 on:
+  push:
+    branches:
+      - "main"
+  pull_request:
   release:
     types:
       - created
@@ -24,51 +28,74 @@ permissions: read-all
 jobs:
   build:
     name: Build for ${{ matrix.os }}-${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    container: centos:7
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [centos]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         arch: [amd64]
+        include:
+          - os: ubuntu-latest
+            arch: arm64
+          - os: macos-latest
+            arch: arm64
       fail-fast: false
     steps:
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.24"
+
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Go 1.24 (CentOS 7)
-        run: |
-          wget https://go.dev/dl/go1.24.0.linux-amd64.tar.gz
-          sudo tar -C /usr/local -xzf go1.24.0.linux-amd64.tar.gz
-          echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-          source ~/.bashrc
-          go version
-
       - name: Install dependencies
-        run: |
-          export PATH=$PATH:/usr/local/go/bin
-          go get .
+        run: go get .
 
-      - name: Install ODBC dependencies (CentOS)
-        if: ${{ matrix.os == 'centos' }}
+      - name: Setup CGO for Linux ARM64
+        if: ${{ runner.os == 'Linux' && matrix.arch == 'arm64' }}
         run: |
-          sudo yum update -y
-          sudo yum install -y unixODBC unixODBC-devel gcc gcc-c++
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Build for CentOS
-        if: ${{ matrix.os == 'centos' }}
+      - name: Build for Linux
+        if: ${{ runner.os == 'Linux' }}
         env:
           CGO_ENABLED: 1
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
         run: |
-          export PATH=$PATH:/usr/local/go/bin
-          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o toolbox
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            export CC=aarch64-linux-gnu-gcc
+            export CXX=aarch64-linux-gnu-g++
+          fi
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-linux-${{ matrix.arch }}
+
+      - name: Build for Windows
+        if: ${{ runner.os == 'Windows' }}
+        env:
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-windows-${{ matrix.arch }}.exe
+
+      - name: Build for macOS
+        if: ${{ runner.os == 'macOS' }}
+        env:
+          CGO_ENABLED: 1
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o genai-toolbox-darwin-${{ matrix.arch }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0
         with:
-          name: genai-toolbox-${{ matrix.os }}-${{ matrix.arch }}
-          path: toolbox
+          name: genai-toolbox-${{ runner.os }}-${{ matrix.arch }}
+          path: |
+            genai-toolbox-linux-${{ matrix.arch }}
+            genai-toolbox-windows-${{ matrix.arch }}.exe
+            genai-toolbox-darwin-${{ matrix.arch }}
           if-no-files-found: error
 
   release:
@@ -88,6 +115,11 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@c9b757c974c67c88f7b640c7f167779056587f1f # v2.0.9
         with:
-          files: artifacts/genai-toolbox-centos-amd64/toolbox
+          files: |
+            artifacts/genai-toolbox-linux-amd64/genai-toolbox-linux-amd64
+            artifacts/genai-toolbox-linux-arm64/genai-toolbox-linux-arm64
+            artifacts/genai-toolbox-windows-amd64/genai-toolbox-windows-amd64.exe
+            artifacts/genai-toolbox-darwin-amd64/genai-toolbox-darwin-amd64
+            artifacts/genai-toolbox-darwin-arm64/genai-toolbox-darwin-arm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
