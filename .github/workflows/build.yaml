@@ -52,8 +52,8 @@ jobs:
           GOARCH=amd64 \
           CGO_CFLAGS="-I/usr/local/include" \
           CGO_LDFLAGS="-L/usr/local/lib -lodbc -ldl" \
-          CC="zig cc -target x86_64-linux-gnu" \
-          CXX="zig c++ -target x86_64-linux-gnu" \
+          CC="zig cc -target x86_64-linux-musl" \
+          CXX="zig c++ -target x86_64-linux-musl" \
           go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=binary -X github.com/googleapis/genai-toolbox/cmd.commitSha=$COMMIT_SHA" -o toolbox.linux.amd64
 
       - name: Upload artifacts
