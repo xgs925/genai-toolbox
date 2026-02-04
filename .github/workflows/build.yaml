@@ -24,10 +24,11 @@ permissions: read-all
 jobs:
   build:
     name: Build for ${{ matrix.os }}-${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    container: centos:latest
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [centos]
         arch: [amd64]
       fail-fast: false
     steps:
@@ -42,14 +43,14 @@ jobs:
       - name: Install dependencies
         run: go get .
 
-      - name: Install ODBC dependencies (Linux)
-        if: ${{ runner.os == 'Linux' }}
+      - name: Install ODBC dependencies (CentOS)
+        if: ${{ matrix.os == 'centos' }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev
+          sudo yum update -y
+          sudo yum install -y unixODBC unixODBC-devel gcc gcc-c++
 
-      - name: Build for Linux
-        if: ${{ runner.os == 'Linux' }}
+      - name: Build for CentOS
+        if: ${{ matrix.os == 'centos' }}
         env:
           CGO_ENABLED: 1
           GOOS: linux
@@ -57,22 +58,11 @@ jobs:
         run: |
           go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o toolbox
 
-      - name: Build for Windows
-        if: ${{ runner.os == 'Windows' }}
-        env:
-          CGO_ENABLED: 1
-          GOOS: windows
-          GOARCH: ${{ matrix.arch }}
-        run: |
-          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=release -X github.com/googleapis/genai-toolbox/cmd.commitSha=${{ github.sha }}" -o toolbox.exe
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0
         with:
-          name: genai-toolbox-${{ runner.os }}-${{ matrix.arch }}
-          path: |
-            toolbox
-            toolbox.exe
+          name: genai-toolbox-${{ matrix.os }}-${{ matrix.arch }}
+          path: toolbox
           if-no-files-found: error
 
   release:
@@ -92,8 +82,6 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@c9b757c974c67c88f7b640c7f167779056587f1f # v2.0.9
         with:
-          files: |
-            artifacts/genai-toolbox-linux-amd64/toolbox
-            artifacts/genai-toolbox-windows-amd64/toolbox.exe
+          files: artifacts/genai-toolbox-centos-amd64/toolbox
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
