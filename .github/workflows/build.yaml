@@ -25,7 +25,7 @@ jobs:
 
       - name: Install Zig
         run: |
-          sudo apt-get update && sudo apt-get install -y xz-utils
+          sudo apt-get update && sudo apt-get install -y xz-utils unixodbc-dev
           curl -fL "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz" -o zig.tar.xz
           mkdir -p zig-tools
           tar -xf zig.tar.xz -C zig-tools --strip-components=1
