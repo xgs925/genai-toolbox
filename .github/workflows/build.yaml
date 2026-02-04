@@ -42,6 +42,12 @@ jobs:
       - name: Install dependencies
         run: go get .
 
+      - name: Install ODBC dependencies (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixODBC unixODBC-devel
+
       - name: Build for Linux
         if: ${{ runner.os == 'Linux' }}
         env:
