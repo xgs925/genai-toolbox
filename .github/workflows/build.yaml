@@ -42,22 +42,9 @@ jobs:
           CXX="zig c++ -target x86_64-linux-gnu" \
           go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=binary -X github.com/googleapis/genai-toolbox/cmd.commitSha=$COMMIT_SHA" -o toolbox.linux.amd64
 
-      - name: Build geminicli binary
-        run: |
-          export VERSION=$(cat ./cmd/version.txt)
-          export COMMIT_SHA=$(git rev-parse --short HEAD)
-          CGO_ENABLED=1 \
-          GOOS=linux \
-          GOARCH=amd64 \
-          CC="zig cc -target x86_64-linux-gnu" \
-          CXX="zig c++ -target x86_64-linux-gnu" \
-          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=geminicli.binary -X github.com/googleapis/genai-toolbox/cmd.commitSha=$COMMIT_SHA" -o toolbox.geminicli.linux.amd64
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-amd64-binaries
-          path: |
-            toolbox.linux.amd64
-            toolbox.geminicli.linux.amd64
+          path: toolbox.linux.amd64
           retention-days: 7
