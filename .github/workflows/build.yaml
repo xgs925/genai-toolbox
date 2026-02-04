@@ -46,7 +46,7 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixODBC unixODBC-devel
+          sudo apt-get install -y unixodbc unixodbc-dev
 
       - name: Build for Linux
         if: ${{ runner.os == 'Linux' }}
