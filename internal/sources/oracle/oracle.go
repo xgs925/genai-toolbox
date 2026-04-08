@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	_ "github.com/godror/godror"   // OCI driver
@@ -137,7 +138,10 @@ func (s *Source) OracleDB() *sql.DB {
 }
 
 func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (any, error) {
-	rows, err := s.OracleDB().QueryContext(ctx, statement, params...)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	rows, err := s.OracleDB().QueryContext(timeoutCtx, statement, params...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to execute query: %w", err)
 	}

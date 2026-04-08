@@ -1,0 +1,48 @@
+name: Build Linux Binary (Standard Edition Only)
+on: [push, pull_request]  # 触发条件：代码推送或PR
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest  # 标准Linux环境，与Cloud Build一致
+    steps:
+      # 1. 拉取代码（等价Cloud Build初始化）
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 设置Go环境（与原配置一致）
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.x'  # 使用最新稳定版Go
+
+      # 3. 安装Zig编译器（原版本0.15.2，用于CGO跨编译）
+      - name: Install Zig
+        run: |
+          sudo apt-get update && sudo apt-get install -y xz-utils
+          curl -fL "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz" -o zig.tar.xz
+          sudo tar -xf zig.tar.xz -C /opt --strip-components=1
+          echo "/opt" >> $GITHUB_PATH  # 将Zig添加到系统路径
+
+      # 4. 安装Go项目依赖（等价原install-dependencies步骤）
+      - name: Install dependencies
+        run: go get -d ./...
+
+      # ====================== 核心：标准Linux amd64编译 ======================
+      - name: Build Standard Linux amd64 Binary
+        run: |
+          export CGO_ENABLED=1          # 开启CGO（与原配置一致）
+          export GOOS=linux             # 目标系统：Linux
+          export GOARCH=amd64           # 目标架构：x86_64
+          # 使用Zig作为C/C++编译器（解决CGO跨编译问题）
+          export CC="zig cc -target x86_64-linux-gnu"
+          export CXX="zig c++ -target x86_64-linux-gnu"
+          
+          # Go编译命令（仅标准版本，无Gemini CLI）
+          go build -ldflags "-X github.com/googleapis/genai-toolbox/cmd.buildType=binary -X github.com/googleapis/genai-toolbox/cmd.commitSha=$(git rev-parse --short HEAD)" -o toolbox.linux.amd64
+
+      # 5. 上传标准Linux二进制产物（用于下载使用）
+      - name: Upload Standard Linux Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-standard-binary
+          path: toolbox.linux.amd64  # 仅保留标准版本产物
